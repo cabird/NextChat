@@ -171,6 +171,8 @@ export const getServerSideConfig = () => {
   //   `[Server Config] using ${randomIndex + 1} of ${apiKeys.length} api key`,
   // );
 
+  const azureUseCLIAuth = process.env.AZURE_USE_CLI_AUTH === "true";
+
   const allowedWebDavEndpoints = (
     process.env.WHITE_WEBDAV_ENDPOINTS ?? ""
   ).split(",");
@@ -185,7 +187,9 @@ export const getServerSideConfig = () => {
     stabilityApiKey: getApiKey(process.env.STABILITY_API_KEY),
 
     isAzure,
+    azureUseCLIAuth,
     azureUrl: process.env.AZURE_URL,
+    azureDeployment: process.env.AZURE_DEPLOYMENT_NAME,
     azureApiKey: getApiKey(process.env.AZURE_API_KEY),
     azureApiVersion: process.env.AZURE_API_VERSION,
 

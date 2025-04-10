@@ -21,6 +21,7 @@
     "test:ci": "node --no-warnings --experimental-vm-modules $(yarn bin jest) --ci"
   },
   "dependencies": {
+    "@azure/identity": "^4.2.1",
     "@fortaine/fetch-event-source": "^3.0.6",
     "@hello-pangea/dnd": "^16.5.0",
     "@modelcontextprotocol/sdk": "^1.0.4",
@@ -29,6 +30,7 @@
     "@vercel/analytics": "^0.1.11",
     "@vercel/speed-insights": "^1.0.2",
     "axios": "^1.7.5",
+    "bufferutil": "^4.0.9",
     "clsx": "^2.1.1",
     "emoji-picker-react": "^4.9.2",
     "fuse.js": "^7.0.0",
@@ -41,6 +43,7 @@
     "nanoid": "^5.0.3",
     "next": "^14.1.1",
     "node-fetch": "^3.3.1",
+    "openai": "^4.93.0",
     "openapi-client-axios": "^7.5.5",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -55,6 +58,7 @@
     "sass": "^1.59.2",
     "spark-md5": "^3.0.2",
     "use-debounce": "^9.0.4",
+    "utf-8-validate": "^6.0.5",
     "zod": "^3.24.1",
     "zustand": "^4.3.8"
   },

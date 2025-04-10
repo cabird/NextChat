@@ -60,7 +60,10 @@ async function handle(
 export const GET = handle;
 export const POST = handle;
 
-export const runtime = "edge";
+// CAB - running in the edge runtime causes issues with azure cli authentication.  Removing
+// this for now as everything seems to work for now, but keep this comment here as a reminder
+// because it's not clear what the impact of running in the edge runtime is.
+//export const runtime = "edge";
 export const preferredRegion = [
   "arn1",
   "bom1",

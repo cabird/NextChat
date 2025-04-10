@@ -3,17 +3,21 @@ import { getServerSideConfig } from "../config/server";
 import { OPENAI_BASE_URL, ServiceProvider } from "../constant";
 import { cloudflareAIGatewayUrl } from "../utils/cloudflare";
 import { getModelProvider, isModelNotavailableInServer } from "../utils/model";
+import { AzureCliCredential } from "@azure/identity";
 
 const serverConfig = getServerSideConfig();
 
 export async function requestOpenai(req: NextRequest) {
   const controller = new AbortController();
 
-  const isAzure = req.nextUrl.pathname.includes("azure/deployments");
+  const isAzure = serverConfig.azureUrl !== "";
+  // Determine if Azure CLI Auth should be used (only applicable for Azure)
+  const azureUseCLIAuth = isAzure && serverConfig.azureUseCLIAuth; // Read the flag
 
   var authValue,
     authHeaderName = "";
-  if (isAzure) {
+  // if Azure CLI Auth is not used, then use the API Key
+  if (isAzure && !azureUseCLIAuth) {
     authValue =
       req.headers
         .get("Authorization")
@@ -22,11 +26,11 @@ export async function requestOpenai(req: NextRequest) {
         .trim() ?? "";
 
     authHeaderName = "api-key";
-  } else {
+    console.log("[Azure Auth] Using API Key");
+  } else if (!isAzure) {
     authValue = req.headers.get("Authorization") ?? "";
     authHeaderName = "Authorization";
   }
-
   let path = `${req.nextUrl.pathname}`.replaceAll("/api/openai/", "");
 
   let baseUrl =
@@ -60,6 +64,25 @@ export async function requestOpenai(req: NextRequest) {
       "",
     )}?api-version=${azureApiVersion}`;
 
+    // if Azure CLI Auth is used, then use the Azure CLI Credential to get a token and add it to the Authorization header
+    if (azureUseCLIAuth) {
+      console.log("[Azure CLI Auth] Using Azure CLI Auth");
+      const credential = new AzureCliCredential();
+      console.log("[Azure CLI Auth] Attempting to get token...");
+      const tokenResponse = await credential.getToken(
+        "https://cognitiveservices.azure.com/.default",
+      );
+      if (!tokenResponse?.token) {
+        throw new Error("Failed to get Azure AD token.");
+      }
+      console.log(
+        "[Azure CLI Auth] Token acquired, expires on:",
+        new Date(tokenResponse.expiresOnTimestamp),
+      );
+      authValue = `Bearer ${tokenResponse.token}`; // Set value for Authorization header
+      authHeaderName = "Authorization"; // Set header name
+    }
+
     // Forward compatibility:
     // if display_name(deployment_name) not set, and '{deploy-id}' in AZURE_URL
     // then using default '{deploy-id}'
@@ -88,8 +111,29 @@ export async function requestOpenai(req: NextRequest) {
     }
   }
 
-  const fetchUrl = cloudflareAIGatewayUrl(`${baseUrl}/${path}`);
-  console.log("fetchUrl", fetchUrl);
+  // CAB - This is janky, but force the URL if we have all of the pieces in the config.
+  // this only happens if the config file has AZURE_URL, AZURE_DEPLOYMENT, and AZURE_API_VERSION
+  // all set in the .env.local file.
+  // *** This will force the web ui settings regarding the model and endpoint to be overridden ***
+  var fetchUrl = "";
+  if (
+    serverConfig.isAzure &&
+    serverConfig.azureDeployment &&
+    serverConfig.azureUrl &&
+    serverConfig.azureApiVersion
+  ) {
+    fetchUrl = `${serverConfig.azureUrl}/openai/deployments/${serverConfig.azureDeployment}/chat/completions?api-version=${serverConfig.azureApiVersion}`;
+    console.log(
+      "[Azure URL] Using Azure endpoint settings from environment config (.env.local).  Forcing URL to:",
+      fetchUrl,
+    );
+    console.log(
+      "[Azure URL] Any endpoint or model selection settings in the web ui will be ignored.",
+    );
+  } else {
+    fetchUrl = cloudflareAIGatewayUrl(`${baseUrl}/${path}`);
+  }
+
   const fetchOptions: RequestInit = {
     headers: {
       "Content-Type": "application/json",
