@@ -40,6 +40,96 @@ English / [简体中文](./README_CN.md)
 
 </div>
 
+The instructions look good overall! Here are some polished and expanded instructions with additional details that might help your team get set up more smoothly:
+
+## Setting up Chris's fork that supports Azure CLI authentication
+
+This fork adds support for Azure CLI authentication, allowing you to use your Azure CLI credentials instead of API keys for OpenAI access.
+
+### Prerequisites and Setup
+
+1. Install WSL2 on your Windows machine: [Install WSL on Windows](https://learn.microsoft.com/en-us/windows/wsl/install). **All following steps should be performed within WSL**.
+
+2. Install and configure the [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli) on your WSL instance.
+
+3. Login to your Azure alt-sc account with `az login`
+   - If prompted, follow the browser authentication flow
+   - Verify login success with `az account show`
+
+4. Check out this repo: 
+   ```
+   git clone https://github.com/cabird/NextChat.git
+   cd NextChat
+   ```
+
+5. Copy the environment template to create your local configuration:
+   ```
+   cp .env.template .env.local
+   ```
+
+6. Edit `.env.local` and configure the following Azure settings:
+   ```
+   AZURE_URL=https://your-resource-name.openai.azure.com/
+   AZURE_API_VERSION=2025-01-01-preview
+   AZURE_USE_CLI_AUTH=true
+   AZURE_DEPLOYMENT_NAME=your-deployment-name
+   ENABLE_MCP=true  # Optional: enable if you need the Model Context Protocol feature
+   ```
+
+7. Leave the `AZURE_API_KEY` field blank when using CLI authentication
+
+### Important Notes
+
+- This configuration will override any endpoint/model settings in the web UI and use your Azure CLI credentials for authentication.
+- **Ignore the model name shown in the chat UI**. The Azure endpoint specified in your `.env.local` file is the one being used.
+- You'll see confirmation messages in the server logs when the Azure endpoint is being used. **You should verify this in the console output**.
+
+### Running the Application
+
+1. Ensure that Node.js and npm are installed in your WSL environment:
+   ```
+   node --version
+   npm --version
+   ```
+
+2. Install Yarn if not already available:
+   ```
+   npm install --global yarn
+   ```
+
+3. Install dependencies:
+   ```
+   yarn install
+   ```
+
+4. Start the development server:
+   ```
+   yarn dev
+   ```
+
+5. Open a web browser at the URL shown (usually http://localhost:3000)
+
+### Verification
+
+1. Send a message in the chat and confirm that you get a response
+2. **Important**: Check the terminal output logs to verify messages like:
+   ```
+   [Azure CLI Auth] Using Azure CLI Auth
+   [Azure CLI Auth] Attempting to get token...
+   [Azure CLI Auth] Token acquired, expires on: [timestamp]
+   [Azure URL] Using Azure endpoint settings from environment config (.env.local). Forcing URL to: [your endpoint]
+   ```
+
+3. If you don't see these messages, check your Azure CLI authentication status and configuration in `.env.local`
+
+### Troubleshooting
+
+- If authentication fails, try running `az login` again to refresh your credentials
+- Ensure that you are logged in with your SC-Alt account.  You can see what accouns is logged in with `az account show` to confirm.
+- Check that your deployment name matches exactly what's configured in Azure
+- Ensure your Azure account has appropriate permissions for the OpenAI resource
+
+
 ## 🥳 Cheer for DeepSeek, China's AI star!
  > Purpose-Built UI for DeepSeek Reasoner Model
  
