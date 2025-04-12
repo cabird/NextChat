@@ -91,23 +91,28 @@ This fork adds support for Azure CLI authentication, allowing you to use your Az
    node --version
    npm --version
    ```
+   If they aren't installed, you can do this with
+   ```
+   sudo apt update
+   sudo apt install nodejs npm
+   ```
 
-2. Install Yarn if not already available:
+3. Install Yarn if not already available:
    ```
    npm install --global yarn
    ```
 
-3. Install dependencies:
+4. Install dependencies:
    ```
    yarn install
    ```
 
-4. Start the development server:
+5. Start the development server:
    ```
    yarn dev
    ```
 
-5. Open a web browser at the URL shown (usually http://localhost:3000)
+6. Open a web browser at the URL shown (usually http://localhost:3000)
 
 ### Verification
 
