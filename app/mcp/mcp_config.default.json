@@ -1,3 +1,13 @@
 {
-  "mcpServers": {}
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/home/cbird/repos/Goldsmith/rationalizer_v0",
+        "/home/cbird/repos/barbell-calculator"
+      ]
+    }
+  }
 }

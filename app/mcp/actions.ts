@@ -20,8 +20,90 @@ import { getServerSideConfig } from "../config/server";
 
 const logger = new MCPClientLogger("MCP Actions");
 const CONFIG_PATH = path.join(process.cwd(), "app/mcp/mcp_config.json");
+// Create a singleton for managing client state
+class ClientStateManager {
+  private static instance: ClientStateManager;
+  private clientsMap: Map<string, McpClientData>;
+  private initializationPromises: Map<string, Promise<void>>;
+  private isInitializing: boolean = false;
 
-const clientsMap = new Map<string, McpClientData>();
+  private constructor() {
+    this.clientsMap = new Map<string, McpClientData>();
+    this.initializationPromises = new Map<string, Promise<void>>();
+  }
+
+  public static getInstance(): ClientStateManager {
+    if (!ClientStateManager.instance) {
+      ClientStateManager.instance = new ClientStateManager();
+    }
+    return ClientStateManager.instance;
+  }
+
+  public getClient(clientId: string): McpClientData | undefined {
+    return this.clientsMap.get(clientId);
+  }
+
+  public setClient(clientId: string, data: McpClientData): void {
+    this.clientsMap.set(clientId, data);
+  }
+
+  public deleteClient(clientId: string): void {
+    this.clientsMap.delete(clientId);
+    this.initializationPromises.delete(clientId);
+  }
+
+  public clear(): void {
+    this.clientsMap.clear();
+    this.initializationPromises.clear();
+  }
+
+  public size(): number {
+    return this.clientsMap.size;
+  }
+
+  public getAllClients(): Map<string, McpClientData> {
+    return new Map(this.clientsMap);
+  }
+
+  public setInitializationPromise(
+    clientId: string,
+    promise: Promise<void>,
+  ): void {
+    this.initializationPromises.set(clientId, promise);
+  }
+
+  public getInitializationPromise(clientId: string): Promise<void> | undefined {
+    return this.initializationPromises.get(clientId);
+  }
+
+  public async waitForInitialization(
+    clientId: string,
+    timeoutMs: number = 30000,
+  ): Promise<void> {
+    const promise = this.initializationPromises.get(clientId);
+    if (!promise) {
+      throw new Error(`No initialization in progress for client ${clientId}`);
+    }
+
+    const timeoutPromise = new Promise<void>((_, reject) => {
+      setTimeout(
+        () =>
+          reject(new Error(`Initialization timeout for client ${clientId}`)),
+        timeoutMs,
+      );
+    });
+
+    return Promise.race([promise, timeoutPromise]);
+  }
+
+  public setIsInitializing(value: boolean): void {
+    this.isInitializing = value;
+  }
+
+  public getIsInitializing(): boolean {
+    return this.isInitializing;
+  }
+}
 
 // 获取客户端状态
 export async function getClientsStatus(): Promise<
@@ -29,9 +111,10 @@ export async function getClientsStatus(): Promise<
 > {
   const config = await getMcpConfigFromFile();
   const result: Record<string, ServerStatusResponse> = {};
+  const clientStateManager = ClientStateManager.getInstance();
 
   for (const clientId of Object.keys(config.mcpServers)) {
-    const status = clientsMap.get(clientId);
+    const status = clientStateManager.getClient(clientId);
     const serverConfig = config.mcpServers[clientId];
 
     if (!serverConfig) {
@@ -76,20 +159,24 @@ export async function getClientsStatus(): Promise<
 
 // 获取客户端工具
 export async function getClientTools(clientId: string) {
-  return clientsMap.get(clientId)?.tools ?? null;
+  return ClientStateManager.getInstance().getClient(clientId)?.tools ?? null;
 }
 
 // 获取可用客户端数量
 export async function getAvailableClientsCount() {
   let count = 0;
-  clientsMap.forEach((map) => !map.errorMsg && count++);
+  const clientStateManager = ClientStateManager.getInstance();
+  clientStateManager
+    .getAllClients()
+    .forEach((client) => !client.errorMsg && count++);
   return count;
 }
 
 // 获取所有客户端工具
 export async function getAllTools() {
   const result = [];
-  for (const [clientId, status] of clientsMap.entries()) {
+  const clientStateManager = ClientStateManager.getInstance();
+  for (const [clientId, status] of clientStateManager.getAllClients()) {
     result.push({
       clientId,
       tools: status.tools,
@@ -102,8 +189,9 @@ export async function getAllTools() {
 async function initializeSingleClient(
   clientId: string,
   serverConfig: ServerConfig,
-) {
-  // 如果服务器状态是暂停，则不初始化
+): Promise<void> {
+  const clientStateManager = ClientStateManager.getInstance();
+
   if (serverConfig.status === "paused") {
     logger.info(`Skipping initialization for paused client [${clientId}]`);
     return;
@@ -111,50 +199,121 @@ async function initializeSingleClient(
 
   logger.info(`Initializing client [${clientId}]...`);
 
-  // 先设置初始化状态
-  clientsMap.set(clientId, {
+  clientStateManager.setClient(clientId, {
     client: null,
     tools: null,
-    errorMsg: null, // null 表示正在初始化
+    errorMsg: null,
   });
 
-  // 异步初始化
-  createClient(clientId, serverConfig)
-    .then(async (client) => {
-      const tools = await listTools(client);
-      logger.info(
-        `Supported tools for [${clientId}]: ${JSON.stringify(tools, null, 2)}`,
-      );
-      clientsMap.set(clientId, { client, tools, errorMsg: null });
-      logger.success(`Client [${clientId}] initialized successfully`);
-    })
-    .catch((error) => {
-      clientsMap.set(clientId, {
-        client: null,
-        tools: null,
-        errorMsg: error instanceof Error ? error.message : String(error),
+  logger.info(`ServerConfig: ${JSON.stringify(serverConfig, null, 2)}`);
+  logger.info(
+    `ClientsMap: ${JSON.stringify(
+      Array.from(clientStateManager.getAllClients().entries()),
+      null,
+      2,
+    )}`,
+  );
+
+  const initPromise = new Promise<void>((resolve, reject) => {
+    createClient(clientId, serverConfig)
+      .then(async (client) => {
+        try {
+          const tools = await listTools(client);
+          logger.info(
+            `Supported tools for [${clientId}]: ${JSON.stringify(
+              tools,
+              null,
+              2,
+            )}`,
+          );
+          clientStateManager.setClient(clientId, {
+            client,
+            tools,
+            errorMsg: null,
+          });
+          logger.success(`Client [${clientId}] initialized successfully`);
+          logger.info(
+            `ClientsMap Keys: ${Array.from(
+              clientStateManager.getAllClients().keys(),
+            )}`,
+          );
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      })
+      .catch((error) => {
+        clientStateManager.setClient(clientId, {
+          client: null,
+          tools: null,
+          errorMsg: error instanceof Error ? error.message : String(error),
+        });
+        logger.error(`Failed to initialize client [${clientId}]: ${error}`);
+        reject(error);
       });
-      logger.error(`Failed to initialize client [${clientId}]: ${error}`);
-    });
+  });
+
+  clientStateManager.setInitializationPromise(clientId, initPromise);
+  return initPromise;
 }
 
 // 初始化系统
 export async function initializeMcpSystem() {
   logger.info("MCP Actions starting...");
+  const clientStateManager = ClientStateManager.getInstance();
+
   try {
-    // 检查是否已有活跃的客户端
-    if (clientsMap.size > 0) {
-      logger.info("MCP system already initialized, skipping...");
+    // Check if we're already initializing
+    if (clientStateManager.getIsInitializing()) {
+      logger.info("MCP system initialization already in progress, waiting...");
+      // Wait for all current initialization promises
+      const promises = Array.from(clientStateManager.getAllClients().keys())
+        .map((clientId) =>
+          clientStateManager.getInitializationPromise(clientId),
+        )
+        .filter((p): p is Promise<void> => p !== undefined);
+
+      if (promises.length > 0) {
+        await Promise.all(promises);
+      }
       return;
     }
 
-    const config = await getMcpConfigFromFile();
-    // 初始化所有客户端
-    for (const [clientId, serverConfig] of Object.entries(config.mcpServers)) {
-      await initializeSingleClient(clientId, serverConfig);
+    // If we have active clients and no initialization is needed, return
+    if (
+      clientStateManager.size() > 0 &&
+      Array.from(clientStateManager.getAllClients().values()).every(
+        (client) => client.client !== null,
+      )
+    ) {
+      logger.info("MCP system already initialized and active, skipping...");
+      return;
     }
-    return config;
+
+    // Start initialization
+    clientStateManager.setIsInitializing(true);
+
+    try {
+      // Clear existing state
+      clientStateManager.clear();
+
+      const config = await getMcpConfigFromFile();
+      const initPromises: Promise<void>[] = [];
+
+      for (const [clientId, serverConfig] of Object.entries(
+        config.mcpServers,
+      )) {
+        initPromises.push(initializeSingleClient(clientId, serverConfig));
+      }
+
+      // Wait for all clients to initialize
+      await Promise.all(initPromises);
+      return config;
+    } finally {
+      clientStateManager.setIsInitializing(false);
+    }
   } catch (error) {
+    clientStateManager.setIsInitializing(false);
     logger.error(`Failed to initialize MCP system: ${error}`);
     throw error;
   }
@@ -195,6 +354,7 @@ export async function addMcpServer(clientId: string, config: ServerConfig) {
 // 暂停服务器
 export async function pauseMcpServer(clientId: string) {
   try {
+    logger.info(`Pausing server [${clientId}]...`);
     const currentConfig = await getMcpConfigFromFile();
     const serverConfig = currentConfig.mcpServers[clientId];
     if (!serverConfig) {
@@ -215,11 +375,11 @@ export async function pauseMcpServer(clientId: string) {
     await updateMcpConfig(newConfig);
 
     // 然后关闭客户端
-    const client = clientsMap.get(clientId);
+    const client = ClientStateManager.getInstance().getClient(clientId);
     if (client?.client) {
       await removeClient(client.client);
     }
-    clientsMap.delete(clientId);
+    ClientStateManager.getInstance().deleteClient(clientId);
 
     return newConfig;
   } catch (error) {
@@ -242,8 +402,17 @@ export async function resumeMcpServer(clientId: string): Promise<void> {
     try {
       const client = await createClient(clientId, serverConfig);
       const tools = await listTools(client);
-      clientsMap.set(clientId, { client, tools, errorMsg: null });
+      ClientStateManager.getInstance().setClient(clientId, {
+        client,
+        tools,
+        errorMsg: null,
+      });
       logger.success(`Client [${clientId}] initialized successfully`);
+      logger.info(
+        `ClientsMap Keys: ${Array.from(
+          ClientStateManager.getInstance().getAllClients().keys(),
+        )}`,
+      );
 
       // 初始化成功后更新配置
       const newConfig: McpConfigData = {
@@ -268,7 +437,7 @@ export async function resumeMcpServer(clientId: string): Promise<void> {
       }
 
       // 初始化失败
-      clientsMap.set(clientId, {
+      ClientStateManager.getInstance().setClient(clientId, {
         client: null,
         tools: null,
         errorMsg: error instanceof Error ? error.message : String(error),
@@ -284,6 +453,7 @@ export async function resumeMcpServer(clientId: string): Promise<void> {
 
 // 移除服务器
 export async function removeMcpServer(clientId: string) {
+  logger.info(`Removing server [${clientId}]...`);
   try {
     const currentConfig = await getMcpConfigFromFile();
     const { [clientId]: _, ...rest } = currentConfig.mcpServers;
@@ -294,11 +464,11 @@ export async function removeMcpServer(clientId: string) {
     await updateMcpConfig(newConfig);
 
     // 关闭并移除客户端
-    const client = clientsMap.get(clientId);
+    const client = ClientStateManager.getInstance().getClient(clientId);
     if (client?.client) {
       await removeClient(client.client);
     }
-    clientsMap.delete(clientId);
+    ClientStateManager.getInstance().deleteClient(clientId);
 
     return newConfig;
   } catch (error) {
@@ -312,20 +482,27 @@ export async function restartAllClients() {
   logger.info("Restarting all clients...");
   try {
     // 关闭所有客户端
-    for (const client of clientsMap.values()) {
+    const clientStateManager = ClientStateManager.getInstance();
+    for (const client of clientStateManager.getAllClients().values()) {
       if (client.client) {
         await removeClient(client.client);
       }
     }
 
     // 清空状态
-    clientsMap.clear();
+    clientStateManager.clear();
 
     // 重新初始化
     const config = await getMcpConfigFromFile();
     for (const [clientId, serverConfig] of Object.entries(config.mcpServers)) {
       await initializeSingleClient(clientId, serverConfig);
     }
+    // output the clientsmap keys
+    logger.info(
+      `ClientsMap Keys: ${Array.from(
+        ClientStateManager.getInstance().getAllClients().keys(),
+      )}`,
+    );
     return config;
   } catch (error) {
     logger.error(`Failed to restart clients: ${error}`);
@@ -338,11 +515,41 @@ export async function executeMcpAction(
   clientId: string,
   request: McpRequestMessage,
 ) {
+  logger.info(`Executing request for [${clientId}]`);
+  logger.info(`Request: ${JSON.stringify(request, null, 2)}`);
+
+  const clientStateManager = ClientStateManager.getInstance();
+  logger.info(
+    `ClientsMap Keys: ${Array.from(clientStateManager.getAllClients().keys())}`,
+  );
+
   try {
-    const client = clientsMap.get(clientId);
-    if (!client?.client) {
-      throw new Error(`Client ${clientId} not found`);
+    // Check if we need to initialize
+    let client = clientStateManager.getClient(clientId);
+    if (!client?.client && !clientStateManager.getIsInitializing()) {
+      logger.info(
+        `Client ${clientId} not found, attempting to initialize MCP system...`,
+      );
+      await initializeMcpSystem();
     }
+
+    // Wait for any ongoing initialization
+    const initPromise = clientStateManager.getInitializationPromise(clientId);
+    if (initPromise) {
+      logger.info(
+        `Waiting for client [${clientId}] initialization to complete...`,
+      );
+      await clientStateManager.waitForInitialization(clientId);
+    }
+
+    // Get the client again after initialization
+    client = clientStateManager.getClient(clientId);
+    if (!client?.client) {
+      throw new Error(
+        `Client ${clientId} not found or not properly initialized`,
+      );
+    }
+
     logger.info(`Executing request for [${clientId}]`);
     return await executeRequest(client.client, request);
   } catch (error) {
